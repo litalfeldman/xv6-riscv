@@ -8,6 +8,8 @@
 
 struct spinlock tickslock;
 uint ticks;
+int READ_PAGE_FAULT = 13;
+int WRITE_PAGE_FAULT = 15;
 
 extern char trampoline[], uservec[], userret[];
 
@@ -27,6 +29,33 @@ void
 trapinithart(void)
 {
   w_stvec((uint64)kernelvec);
+}
+
+int
+cow(pagetable_t pagetable, uint64 va)
+{
+  va = PGROUNDDOWN(va);
+
+  //MAXVA - the max address
+  pte_t *pte;
+  if (va >= MAXVA || (pte = walk(pagetable, va, 0)) == 0 || (*pte & PTE_V) == 0 ){
+    return -1;
+  }
+
+  if ((*pte & PTE_COW) == 0)
+    return 1;
+
+  char *n_pa;
+  if ((n_pa = kalloc()) != 0) {
+    uint64 pa = PTE2PA(*pte);
+    memmove(n_pa, (char*)pa, PGSIZE);
+    *pte = PA2PTE(n_pa) | ((PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W);
+    kfree((void*)pa);
+
+    return 0;
+  } else {
+    return -1;
+  }
 }
 
 //
@@ -65,6 +94,14 @@ usertrap(void)
     intr_on();
 
     syscall();
+
+  // r_scause - the type of vaiolation that caused the fault
+  } else if (r_scause() == READ_PAGE_FAULT || r_scause() == WRITE_PAGE_FAULT) {
+    // r_stval - va that caused the fault
+    if (cow(p->pagetable, r_stval()) != 0 || r_stval() >= p->sz) {
+      p->killed = 1;
+    }
+
   } else if((which_dev = devintr()) != 0){
     // ok
   } else {

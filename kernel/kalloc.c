@@ -21,12 +21,18 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
+
 } kmem;
+
+int references[PHYSICAL_ADDRESS_TO_INDEX(PHYSTOP)];
+struct spinlock r_lock;
 
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  initlock(&r_lock, "refereces");
+  memset(references, 0, sizeof(int)*PHYSICAL_ADDRESS_TO_INDEX(PHYSTOP));
   freerange(end, (void*)PHYSTOP);
 }
 
@@ -37,6 +43,16 @@ freerange(void *pa_start, void *pa_end)
   p = (char*)PGROUNDUP((uint64)pa_start);
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
     kfree(p);
+}
+
+int
+reference_remove(uint64 pa)
+{
+  int ref;
+  acquire(&r_lock);
+  ref = --references[PHYSICAL_ADDRESS_TO_INDEX(pa)];
+  release(&r_lock);
+  return ref;
 }
 
 // Free the page of physical memory pointed at by v,
@@ -51,6 +67,10 @@ kfree(void *pa)
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
+  if (reference_remove((uint64)pa) > 0)
+    return;
+
+  references[PHYSICAL_ADDRESS_TO_INDEX((uint64)pa)] = 0;
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
@@ -61,7 +81,6 @@ kfree(void *pa)
   kmem.freelist = r;
   release(&kmem.lock);
 }
-
 // Allocate one 4096-byte page of physical memory.
 // Returns a pointer that the kernel can use.
 // Returns 0 if the memory cannot be allocated.
@@ -72,11 +91,31 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if(r)
+
+  if(r) {
+    references[PHYSICAL_ADDRESS_TO_INDEX((uint64)r)] = 1;
     kmem.freelist = r->next;
+  }
   release(&kmem.lock);
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
+}
+
+
+int 
+reference_find(uint64 pa)
+{
+  return references[PHYSICAL_ADDRESS_TO_INDEX(pa)];
+}
+
+int
+reference_add(uint64 pa)
+{
+  int ref;
+  acquire(&r_lock);
+  ref = ++references[PHYSICAL_ADDRESS_TO_INDEX(pa)];
+  release(&r_lock); 
+  return ref;
 }
