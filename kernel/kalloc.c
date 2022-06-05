@@ -27,6 +27,8 @@ struct {
 int references[PHYSICAL_ADDRESS_TO_INDEX(PHYSTOP)];
 struct spinlock r_lock;
 
+extern uint cas(volatile void *addr, int expected, int newval);
+
 void
 kinit()
 {
@@ -49,10 +51,12 @@ int
 reference_remove(uint64 pa)
 {
   int ref;
-  acquire(&r_lock);
-  ref = --references[PHYSICAL_ADDRESS_TO_INDEX(pa)];
-  release(&r_lock);
-  return ref;
+  do 
+  {
+    ref = references[PHYSICAL_ADDRESS_TO_INDEX(pa)];
+  }
+  while (cas(&(references[PHYSICAL_ADDRESS_TO_INDEX(pa)]), ref, ref-1));
+  return ref-1;
 }
 
 // Free the page of physical memory pointed at by v,
@@ -114,8 +118,10 @@ int
 reference_add(uint64 pa)
 {
   int ref;
-  acquire(&r_lock);
-  ref = ++references[PHYSICAL_ADDRESS_TO_INDEX(pa)];
-  release(&r_lock); 
-  return ref;
+  do 
+  {
+    ref = references[PHYSICAL_ADDRESS_TO_INDEX(pa)];
+  }
+  while (cas(&(references[PHYSICAL_ADDRESS_TO_INDEX(pa)]), ref, ref+1));
+  return ref+1;
 }
