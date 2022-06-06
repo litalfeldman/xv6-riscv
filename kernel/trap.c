@@ -46,15 +46,19 @@ cow(pagetable_t pagetable, uint64 va)
     return 1;
 
   char *n_pa;
-  if ((n_pa = kalloc()) != 0) {
+
+  if ((n_pa = kalloc()) == 0) {
+    return -1;
+  
+
+  } else {
+    long int pte1 = PA2PTE(n_pa);
+    long int pte2 = (PTE_FLAGS(*pte) & ~PTE_COW);
     uint64 pa = PTE2PA(*pte);
     memmove(n_pa, (char*)pa, PGSIZE);
-    *pte = PA2PTE(n_pa) | ((PTE_FLAGS(*pte) & ~PTE_COW) | PTE_W);
+    *pte = pte1 | pte2 | PTE_W;
     kfree((void*)pa);
-
     return 0;
-  } else {
-    return -1;
   }
 }
 

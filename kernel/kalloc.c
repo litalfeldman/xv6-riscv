@@ -30,21 +30,21 @@ struct spinlock r_lock;
 extern uint cas(volatile void *addr, int expected, int newval);
 
 void
-kinit()
-{
-  initlock(&kmem.lock, "kmem");
-  initlock(&r_lock, "refereces");
-  memset(references, 0, sizeof(int)*PHYSICAL_ADDRESS_TO_INDEX(PHYSTOP));
-  freerange(end, (void*)PHYSTOP);
-}
-
-void
 freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char*)PGROUNDUP((uint64)pa_start);
   for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
     kfree(p);
+}
+
+void
+kinit()
+{
+  initlock(&kmem.lock, "kmem");
+  initlock(&r_lock, "refereces");
+  memset(references, 0, sizeof(int)*PHYSICAL_ADDRESS_TO_INDEX(PHYSTOP));
+  freerange(end, (void*)PHYSTOP);
 }
 
 int
@@ -67,14 +67,17 @@ void
 kfree(void *pa)
 {
   struct run *r;
+  int index = PHYSICAL_ADDRESS_TO_INDEX((uint64)pa);
 
   if(((uint64)pa % PGSIZE) != 0 || (char*)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
-  if (reference_remove((uint64)pa) > 0)
+  // Page count is larger than 0, so there is no need to remove the page
+  if (reference_remove((uint64)pa) >= 1)
     return;
 
-  references[PHYSICAL_ADDRESS_TO_INDEX((uint64)pa)] = 0;
+  references[index] = 0;
+
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
 
@@ -95,9 +98,11 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
+  int index = PHYSICAL_ADDRESS_TO_INDEX((uint64)r);
+  int newPage = 1;
 
   if(r) {
-    references[PHYSICAL_ADDRESS_TO_INDEX((uint64)r)] = 1;
+    references[index] = newPage;
     kmem.freelist = r->next;
   }
   release(&kmem.lock);
@@ -105,13 +110,6 @@ kalloc(void)
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
   return (void*)r;
-}
-
-
-int 
-reference_find(uint64 pa)
-{
-  return references[PHYSICAL_ADDRESS_TO_INDEX(pa)];
 }
 
 int
