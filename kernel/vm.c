@@ -301,21 +301,20 @@ int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
-  uint64 va, pa;
+  uint64 pa, i;
 
-  for (va = 0; va < sz; va += PGSIZE) {
-    
-    if ((pte = walk(old, va, 0)) == 0) 
+  for (i = 0; i < sz; i += PGSIZE) {
+    if ((pte = walk(old, i, 0)) == 0) 
       panic("uvmcopy: pte should exist");
     if((*pte & PTE_V) == 0)
       panic("uvmcopy: page not present");
-
     pa = PTE2PA(*pte);
 
-    if (*pte & PTE_W)
-      *pte = (*pte | PTE_COW) & ~PTE_W;
-
-    if(mappages(new, va, PGSIZE, pa, (uint)PTE_FLAGS(*pte)) < 0)
+    if (*pte & PTE_W) {
+      pte_t pteWithCow = (*pte | PTE_COW);
+      *pte = pteWithCow & ~PTE_W;
+    }
+    if(mappages(new, i, PGSIZE, pa, (uint)PTE_FLAGS(*pte)) <= -1)
       goto err;
 
     reference_add(pa);
@@ -323,7 +322,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   return 0;
 
   err:
-  uvmunmap(new, 0, va / PGSIZE, 1);
+  uvmunmap(new, 0, i / PGSIZE, 1);
   return -1;
 }
 
@@ -351,7 +350,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
-    if (cow(pagetable, va0) < 0)
+    if (cow(pagetable, va0) <= -1)
       return -1;
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0)
